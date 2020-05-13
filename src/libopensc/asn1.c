@@ -961,6 +961,9 @@ static int sc_asn1_decode_utf8string(const u8 *inbuf, size_t inlen,
 	return 0;
 }
 
+/*
+ * This assumes the tag is already encoded
+ */
 int sc_asn1_put_tag(unsigned int tag, const u8 * data, size_t datalen, u8 * out, size_t outlen, u8 **ptr)
 {
 	size_t c = 0;
@@ -1506,7 +1509,7 @@ static int asn1_decode_entry(sc_context_t *ctx,struct sc_asn1_entry *entry,
 	case SC_ASN1_INTEGER:
 	case SC_ASN1_ENUMERATED:
 		if (parm != NULL) {
-			r = sc_asn1_decode_integer(obj, objlen, (int *) entry->parm, 1);
+			r = sc_asn1_decode_integer(obj, objlen, (int *) entry->parm, 0);
 			sc_debug(ctx, SC_LOG_DEBUG_ASN1, "%*.*sdecoding '%s' returned %d\n", depth, depth, "",
 					entry->name, *((int *) entry->parm));
 		}

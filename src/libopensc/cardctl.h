@@ -83,6 +83,7 @@ enum {
 	SC_CARDCTL_CARDOS_PUT_DATA_OCI,
 	SC_CARDCTL_CARDOS_PUT_DATA_SECI,
 	SC_CARDCTL_CARDOS_GENERATE_KEY,
+	SC_CARDCTL_CARDOS_PASS_ALGO_FLAGS,
 
 	/*
 	 * Starcos SPK 2.3 specific calls
@@ -351,6 +352,14 @@ typedef struct sc_cardctl_pkcs11_init_pin {
 } sc_cardctl_pkcs11_init_pin_t;
 
 /*
+ * Generic cardctl - card driver can examine token info
+ */
+struct sc_cardctl_parsed_token_info {
+	unsigned int flags;
+	struct sc_pkcs15_tokeninfo * tokeninfo;
+};
+
+/*
  * GPK lock file.
  * Parent DF of file must be selected.
  */
@@ -417,6 +426,15 @@ struct sc_cardctl_cardos_genkey_info {
 	unsigned int	key_id;
 	unsigned int	key_bits;
 	unsigned short	fid;
+};
+
+struct sc_cardctl_cardos_pass_algo_flags {
+	unsigned int pass;
+	unsigned long card_flags; /* from card->flags i.e. user set */
+	unsigned long used_flags; /* as set by default */
+	unsigned long new_flags; /* set in pkcs15-cardos.c */
+	unsigned long ec_flags; /* for EC keys */
+	unsigned long ext_flags; /* for EC keys */
 };
 
 /*
@@ -962,6 +980,9 @@ typedef struct sc_cardctl_piv_genkey_info_st {
 #define SC_OPENPGP_KEYFORMAT_RSA_CRT	2
 #define SC_OPENPGP_KEYFORMAT_RSA_CRTN	3
 
+#define SC_OPENPGP_KEYFORMAT_EC_STD	0
+#define SC_OPENPGP_KEYFORMAT_EC_STDPUB	0xFF
+
 #define SC_OPENPGP_MAX_EXP_BITS		0x20 /* maximum exponent length supported in bits */
 
 typedef struct sc_cardctl_openpgp_keygen_info {
@@ -969,13 +990,14 @@ typedef struct sc_cardctl_openpgp_keygen_info {
 	u8 algorithm;		/* SC_OPENPGP_KEYALGO_... */
 	union {
 		struct {
+			u8 keyformat;		/* SC_OPENPGP_KEYFORMAT_RSA_... */
 			u8 *modulus;		/* New-generated pubkey info responded from the card */
 			size_t modulus_len;	/* Length of modulus in bit */
 			u8 *exponent;
 			size_t exponent_len;	/* Length of exponent in bit */
-			u8 keyformat;		/* SC_OPENPGP_KEYFORMAT_RSA_... */
 		} rsa;
 		struct {
+			u8 keyformat;	/* SC_OPENPGP_KEYFORMAT_EC_... */
 			u8 *ecpoint;
 			size_t ecpoint_len;
 			struct sc_object_id oid;
@@ -1001,10 +1023,13 @@ typedef struct sc_cardctl_openpgp_keystore_info {
 			size_t n_len;
 		} rsa;
 		struct {
+			u8 keyformat;	/* SC_OPENPGP_KEYFORMAT_EC_... */
 			u8 *privateD;
 			size_t privateD_len;
-			u8 *ecpoint;
-			size_t ecpoint_len;
+			u8 *ecpointQ;
+			size_t ecpointQ_len;
+			struct sc_object_id oid;
+			u8 oid_len;
 		} ec;
 	} u;
 	time_t creationtime;

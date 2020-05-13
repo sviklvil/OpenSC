@@ -706,7 +706,7 @@ iasecc_erase_binary(struct sc_card *card, unsigned int offs, size_t count, unsig
 
 	rv = sc_update_binary(card, offs, tmp, count, flags);
 	free(tmp);
-	LOG_TEST_RET(ctx, rv, "iasecc_erase_binary() update binary error");
+
 	LOG_FUNC_RETURN(ctx, rv);
 }
 
@@ -1036,6 +1036,7 @@ iasecc_select_file(struct sc_card *card, const struct sc_path *path,
 
 				rv = iasecc_process_fci(card, file, apdu.resp, apdu.resplen);
 				if (rv) {
+					sc_file_free(file);
 					if (file_out) {
 						sc_file_free(*file_out);
 						*file_out = NULL;

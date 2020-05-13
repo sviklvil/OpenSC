@@ -213,17 +213,17 @@ extern "C" {
 /* Event masks for sc_wait_for_event() */
 #define SC_EVENT_CARD_INSERTED		0x0001
 #define SC_EVENT_CARD_REMOVED		0x0002
-#define SC_EVENT_CARD_EVENTS		SC_EVENT_CARD_INSERTED|SC_EVENT_CARD_REMOVED
+#define SC_EVENT_CARD_EVENTS		(SC_EVENT_CARD_INSERTED|SC_EVENT_CARD_REMOVED)
 #define SC_EVENT_READER_ATTACHED	0x0004
 #define SC_EVENT_READER_DETACHED	0x0008
-#define SC_EVENT_READER_EVENTS		SC_EVENT_READER_ATTACHED|SC_EVENT_READER_DETACHED
+#define SC_EVENT_READER_EVENTS		(SC_EVENT_READER_ATTACHED|SC_EVENT_READER_DETACHED)
 
 #define MAX_FILE_SIZE 65535
 
 struct sc_supported_algo_info {
 	unsigned int reference;
 	unsigned int mechanism;
-	struct sc_object_id *parameters; /* OID for ECC, NULL for RSA */
+	struct sc_object_id parameters; /* OID for ECC */
 	unsigned int operations;
 	struct sc_object_id algo_id;
 	unsigned int algo_ref;
@@ -605,28 +605,90 @@ typedef struct sc_card {
 } sc_card_t;
 
 struct sc_card_operations {
-	/* Called in sc_connect_card().  Must return 1, if the current
+	/** @brief Match a card with the given card driver.
+	 *
+	 * Called in sc_connect_card().  Must return 1, if the current
 	 * card can be handled with this driver, or 0 otherwise.  ATR
 	 * field of the sc_card struct is filled in before calling
-	 * this function. */
+	 * this function. It is recommended not to modify `card` during this call.
+	 * */
 	int (*match_card)(struct sc_card *card);
 
-	/* Called when ATR of the inserted card matches an entry in ATR
+	/** @brief Initialize a card.
+	 *
+	 * Called when ATR of the inserted card matches an entry in ATR
 	 * table.  May return SC_ERROR_INVALID_CARD to indicate that
-	 * the card cannot be handled with this driver. */
+	 * the card cannot be handled with this driver. drv_data may be used to
+	 * store card driver's (allocated) private data. */
 	int (*init)(struct sc_card *card);
-	/* Called when the card object is being freed.  finish() has to
+	/** @brief Deinitialize a card.
+	 *
+	 * Called when the `card` object is being freed.  finish() has to
 	 * deallocate all possible private data. */
 	int (*finish)(struct sc_card *card);
 
 	/* ISO 7816-4 functions */
 
+	/**
+	 * @brief Read data from a binary EF with a single command
+	 *
+	 * Implementation of this call back is optional and may be NULL.
+	 *
+	 * @param  card   struct sc_card object on which to issue the command
+	 * @param  idx    index within the file with the data to read
+	 * @param  buf    buffer to the read data
+	 * @param  count  number of bytes to read
+	 * @param  flags  flags for the READ BINARY command (currently not used)
+	 * @return number of bytes read or an error code
+	 *
+	 * @see sc_read_binary()
+	 */
 	int (*read_binary)(struct sc_card *card, unsigned int idx,
 			u8 * buf, size_t count, unsigned long flags);
+	/**
+	 * @brief Write data to a binary EF with a single command
+	 *
+	 * Implementation of this call back is optional and may be NULL.
+	 *
+	 * @param  card   struct sc_card object on which to issue the command
+	 * @param  idx    index within the file for the data to be written
+	 * @param  buf    buffer with the data
+	 * @param  count  number of bytes to write
+	 * @param  flags  flags for the WRITE BINARY command (currently not used)
+	 * @return number of bytes written or an error code
+	 *
+	 * @see sc_write_binary()
+	 */
 	int (*write_binary)(struct sc_card *card, unsigned int idx,
 				const u8 * buf, size_t count, unsigned long flags);
+	/** @brief Updates the content of a binary EF
+	 *
+	 * Implementation of this call back is optional and may be NULL.
+	 *
+	 * @param  card   struct sc_card object on which to issue the command
+	 * @param  idx    index within the file for the data to be updated
+	 * @param  buf    buffer with the new data
+	 * @param  count  number of bytes to update
+	 * @param  flags  flags for the UPDATE BINARY command (currently not used)
+	 * @return number of bytes written or an error code
+	 *
+	 * @see sc_update_binary()
+	 */
 	int (*update_binary)(struct sc_card *card, unsigned int idx,
 			     const u8 * buf, size_t count, unsigned long flags);
+	/**
+	 * @brief Sets (part of) the content fo an EF to its logical erased state
+	 *
+	 * Implementation of this call back is optional and may be NULL.
+	 *
+	 * @param  card   struct sc_card object on which to issue the command
+	 * @param  idx    index within the file for the data to be erased
+	 * @param  count  number of bytes to erase
+	 * @param  flags  flags for the ERASE BINARY command (currently not used)
+	 * @return number of bytes erased or an error code
+	 *
+	 * @see sc_erase_binary()
+	 */
 	int (*erase_binary)(struct sc_card *card, unsigned int idx,
 			    size_t count, unsigned long flags);
 
@@ -1024,18 +1086,25 @@ int sc_disconnect_card(struct sc_card *card);
 int sc_detect_card_presence(sc_reader_t *reader);
 
 /**
- * Waits for an event on readers. Note: only the event is detected,
- * there is no update of any card or other info.
- * NOTE: Only PC/SC backend implements this.
- * @param ctx  pointer to a Context structure
- * @param event_mask The types of events to wait for; this should
- *   be ORed from one of the following
- *   	SC_EVENT_CARD_REMOVED
- *   	SC_EVENT_CARD_INSERTED
- *	SC_EVENT_READER_ATTACHED
- * @param event_reader (OUT) the reader on which the event was detected, or NULL if new reader
+ * Waits for an event on readers.
+ *
+ * In case of a reader event (attached/detached), the list of reader is
+ * adjusted accordingly. This means that a subsequent call to
+ * `sc_ctx_detect_readers()` is not needed.
+ *
+ * @note Only PC/SC backend implements this. An infinite timeout on macOS does
+ * not detect reader events (use a limited timeout instead if needed).
+ *
+ * @param ctx (IN) pointer to a Context structure
+ * @param event_mask (IN) The types of events to wait for; this should
+ *   be ORed from one of the following:
+ *   - SC_EVENT_CARD_REMOVED
+ *   - SC_EVENT_CARD_INSERTED
+ *	 - SC_EVENT_READER_ATTACHED
+ *	 - SC_EVENT_READER_DETACHED
+ * @param event_reader (OUT) the reader on which the event was detected
  * @param event (OUT) the events that occurred. This is also ORed
- *   from the SC_EVENT_CARD_* constants listed above.
+ *   from the constants listed above.
  * @param timeout Amount of millisecs to wait; -1 means forever
  * @retval < 0 if an error occurred
  * @retval = 0 if a an event happened
@@ -1123,7 +1192,10 @@ int sc_select_file(struct sc_card *card, const sc_path_t *path,
  */
 int sc_list_files(struct sc_card *card, u8 *buf, size_t buflen);
 /**
- * Read data from a binary EF
+ * @brief Read data from a binary EF
+ *
+ * If `count` exceeds the card's transmission limits, multiple commands are issued.
+ *
  * @param  card   struct sc_card object on which to issue the command
  * @param  idx    index within the file with the data to read
  * @param  buf    buffer to the read data
@@ -1134,7 +1206,10 @@ int sc_list_files(struct sc_card *card, u8 *buf, size_t buflen);
 int sc_read_binary(struct sc_card *card, unsigned int idx, u8 * buf,
 		   size_t count, unsigned long flags);
 /**
- * Write data to a binary EF
+ * @brief Write data to a binary EF
+ *
+ * If `count` exceeds the card's transmission limits, multiple commands are issued.
+ *
  * @param  card   struct sc_card object on which to issue the command
  * @param  idx    index within the file for the data to be written
  * @param  buf    buffer with the data
@@ -1145,7 +1220,10 @@ int sc_read_binary(struct sc_card *card, unsigned int idx, u8 * buf,
 int sc_write_binary(struct sc_card *card, unsigned int idx, const u8 * buf,
 		    size_t count, unsigned long flags);
 /**
- * Updates the content of a binary EF
+ * @brief Updates the content of a binary EF
+ *
+ * If `count` exceeds the card's transmission limits, multiple commands are issued.
+ *
  * @param  card   struct sc_card object on which to issue the command
  * @param  idx    index within the file for the data to be updated
  * @param  buf    buffer with the new data
@@ -1162,7 +1240,7 @@ int sc_update_binary(struct sc_card *card, unsigned int idx, const u8 * buf,
  * @param  idx    index within the file for the data to be erased
  * @param  count  number of bytes to erase
  * @param  flags  flags for the ERASE BINARY command (currently not used)
- * @return number of bytes written or an error code
+ * @return number of bytes erased or an error code
  */
 int sc_erase_binary(struct sc_card *card, unsigned int idx,
 		    size_t count, unsigned long flags);

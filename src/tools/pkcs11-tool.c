@@ -274,6 +274,7 @@ static const char *option_help[] = {
 	"Specify 'sign' key usage flag (sets SIGN in privkey, sets VERIFY in pubkey)",
 	"Specify 'decrypt' key usage flag (RSA only, set DECRYPT privkey, ENCRYPT in pubkey)",
 	"Specify 'derive' key usage flag (EC only)",
+	"Specify 'wrap' key usage flag",
 	"Write an object (key, cert, data) to the card",
 	"Get object's CKA_VALUE attribute (use with --type)",
 	"Delete an object (use with --type cert/data/privkey/pubkey/secrkey)",
@@ -1597,53 +1598,42 @@ static void init_pin(CK_SLOT_ID slot, CK_SESSION_HANDLE sess)
 
 static int change_pin(CK_SLOT_ID slot, CK_SESSION_HANDLE sess)
 {
-	char old_buf[21], *old_pin = NULL;
-	char new_buf[21], *new_pin = NULL;
+	char old_buf[21], *old_pin = opt_so_pin ? (char*)opt_so_pin : (char*)opt_pin;
+	char new_buf[21], *new_pin = (char *)opt_new_pin;
 	CK_TOKEN_INFO	info;
 	CK_RV rv;
 	int r;
 	size_t		len = 0;
 
 	get_token_info(slot, &info);
+	const CK_FLAGS hasReaderPinPad = info.flags & CKF_PROTECTED_AUTHENTICATION_PATH;
 
-	if (!(info.flags & CKF_PROTECTED_AUTHENTICATION_PATH)) {
-		if (!opt_pin && !opt_so_pin) {
-			printf("Please enter the current PIN: ");
-			r = util_getpass(&old_pin, &len, stdin);
-			if (r < 0)
-				return 1;
-			if (!old_pin || !*old_pin || strlen(old_pin) > 20)
-				return 1;
-			strcpy(old_buf, old_pin);
-			old_pin = old_buf;
-		}
-		else   {
-			if (opt_so_pin)
-				old_pin = (char *) opt_so_pin;
-			else
-				old_pin = (char *) opt_pin;
-		}
+	if (!hasReaderPinPad && !old_pin) {
+		printf("Please enter the current PIN: ");
+		r = util_getpass(&old_pin, &len, stdin);
+		if (r < 0)
+			return 1;
+		if (!old_pin || !*old_pin || strlen(old_pin) > 20)
+			return 1;
+		strcpy(old_buf, old_pin);
+		old_pin = old_buf;
+	}
+	if (!hasReaderPinPad && !new_pin) {
+		printf("Please enter the new PIN: ");
+		r = util_getpass(&new_pin, &len, stdin);
+		if (r < 0)
+			return 1;
+		if (!new_pin || !*new_pin || strlen(new_pin) > 20)
+			return 1;
+		strcpy(new_buf, new_pin);
 
-		if (!opt_new_pin) {
-			printf("Please enter the new PIN: ");
-			r = util_getpass(&new_pin, &len, stdin);
-			if (r < 0)
-				return 1;
-			if (!new_pin || !*new_pin || strlen(new_pin) > 20)
-				return 1;
-			strcpy(new_buf, new_pin);
-
-			printf("Please enter the new PIN again: ");
-			r = util_getpass(&new_pin, &len, stdin);
-			if (r < 0)
-				return 1;
-			if (!new_pin || !*new_pin || strcmp(new_buf, new_pin) != 0) {
-				free(new_pin);
-				return 1;
-			}
-		}
-		else   {
-			new_pin = (char *) opt_new_pin;
+		printf("Please enter the new PIN again: ");
+		r = util_getpass(&new_pin, &len, stdin);
+		if (r < 0)
+			return 1;
+		if (!new_pin || !*new_pin || strcmp(new_buf, new_pin) != 0) {
+			free(new_pin);
+			return 1;
 		}
 	}
 
@@ -5054,8 +5044,8 @@ static int test_signature(CK_SESSION_HANDLE sess)
 	}
 
 	if (firstMechType == CKM_RSA_X_509) {
-		/* make sure our data is smaller than the modulus */
-		data[0] = 0x00;
+		/* make sure our data is smaller than the modulus - 11 */
+		memset(data, 0, 11); /* in effect is zero padding */ 
 	}
 
 	ck_mech.mechanism = firstMechType;
